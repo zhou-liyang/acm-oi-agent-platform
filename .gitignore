@@ -28,3 +28,6 @@ dist/
 *.obj
 *.o
 *.out
+
+# Keep expected outputs for judge tests
+!Tests/**/*.out
