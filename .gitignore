@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment variables / secrets
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+
+# Build / temporary files
+build/
+dist/
+*.egg-info/
+
+# Logs
+*.log
+
+# C/C++ build outputs
+*.exe
+*.obj
+*.o
+*.out
