@@ -30,4 +30,4 @@ dist/
 *.out
 
 # Keep expected outputs for judge tests
-!Tests/**/*.out
+!Problems/**/Tests/*.out
