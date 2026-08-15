@@ -92,7 +92,9 @@ The current verifier implementation is still an evolving pipeline.
     - `TOOL_ERROR`
     - `BLOCKED`
 
-`Code/verifier_agent.py` is intentionally not installed yet. The existing verifier stages are being consolidated before the unified Verifier Agent is introduced.
+- `Code/verifier_agent.py`
+  - Unified verifier orchestration entry point.
+  - Runs deterministic V1 checks, Flash-none V2 independent solving, local V3 disagreement analysis, and Pro-high case adjudication only when shared disagreement exists.
 
 ## Problem Pools
 
@@ -132,14 +134,19 @@ Completed or usable:
 - Differential evidence analysis in Verifier V3.
 - Per-case Oracle V3.1.
 - Verification-state aggregation.
+- Unified Verifier Agent orchestration.
+
+Validated smoke paths:
+
+- Live short-circuit: `milk` reached `TESTS_CORROBORATED` on the first Flash-none attempt without entering V3 or adjudication.
+- Real-problem escalation gate: `cut` remained `INCONCLUSIVE` without shared disagreement, and therefore did not trigger Pro-high adjudication.
+- Deterministic orchestration tests cover supported adjudication, contradicted adjudication, and no-shared-disagreement gating without model API calls.
 
 Next:
 
-1. Create a clean Git baseline for the current implementation.
-2. Install the unified `verifier_agent.py`.
-3. Connect the existing verifier stages behind one orchestration entry point.
-4. Run unified Agent smoke tests from the clean baseline.
-5. Continue improving verification quality and cost control before expanding problem difficulty.
+1. Expand regression coverage across the private and benchmark pools.
+2. Improve verifier evidence reporting, failure classification, and cost accounting.
+3. Continue tuning escalation policy before expanding problem difficulty.
 
 ## Repository Hygiene
 
