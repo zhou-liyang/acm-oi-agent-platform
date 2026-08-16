@@ -19,49 +19,61 @@ except ModuleNotFoundError:
     from Code.Tools.compare_output import compare_output
 
 
+ORACLE_PROVIDER = os.getenv(
+    "MODEL_PROVIDER",
+    os.getenv("CASE_ORACLE_PROVIDER", "deepseek"),
+)
+
 ORACLE_MODEL = os.getenv(
-    "DEEPSEEK_CASE_ORACLE_MODEL",
-    "deepseek-v4-flash",
+    "MODEL_NAME",
+    os.getenv(
+        "DEEPSEEK_CASE_ORACLE_MODEL",
+        "deepseek-v4-flash",
+    ),
 )
 
 ORACLE_REASONING = os.getenv(
-    "DEEPSEEK_CASE_ORACLE_REASONING",
-    "low",
+    "MODEL_REASONING",
+    os.getenv(
+        "DEEPSEEK_CASE_ORACLE_REASONING",
+        "low",
+    ),
 )
 
 ORACLE_MAX_TOKENS = int(
     os.getenv(
-        "DEEPSEEK_CASE_ORACLE_MAX_TOKENS",
-        "768",
+        "MODEL_MAX_TOKENS",
+        os.getenv(
+            "DEEPSEEK_CASE_ORACLE_MAX_TOKENS",
+            "768",
+        ),
     )
 )
 
+ORACLE_THINKING_BUDGET = (
+    int(os.getenv("MODEL_THINKING_BUDGET"))
+    if os.getenv("MODEL_THINKING_BUDGET")
+    else None
+)
+
 SYSTEM_PROMPT = """
-You are a case oracle for ACM/OI problem verification.
+You are an exact-output case oracle for ACM/OI problem verification.
 
 You will receive:
 1. the complete problem statement;
 2. exactly one concrete input.
 
-Determine the exact stdout required by the statement for that input.
+Independently determine the exact stdout required by the statement for that input.
 
 Hard rules:
-- Use only the statement and the supplied input.
-- You are NOT given any official answer.
-- Do not infer an answer from test names, test purposes, candidate programs,
-  majority votes, previous attempts, or hidden judge feedback.
-- Do not write a full solution program.
-- Carefully resolve boundary conditions and operation order.
-- Return one JSON object only.
-
-JSON schema:
-{
-  "answer": "exact stdout, without Markdown fences",
-  "confidence": "high|medium|low",
-  "reason": "concise derivation in at most 3 sentences"
-}
-
-The answer field must contain exactly what a correct program should print.
+- Use only the statement and supplied input.
+- You are NOT given the official answer.
+- Ignore test names, purposes, candidate programs, votes, and hidden judge feedback.
+- Think internally before answering.
+- Return ONLY the exact stdout a correct program should print.
+- Do not return JSON, Markdown fences, explanations, labels, or quotations.
+- Preserve multiple output lines when required.
+- The output may be long: produce it completely and do not abbreviate it.
 """.strip()
 
 
@@ -78,61 +90,6 @@ def read_text(path: Path) -> str:
         encoding="utf-8-sig",
         errors="strict",
     )
-
-
-def strip_fence(text: str) -> str:
-    text = text.strip()
-
-    if text.startswith("```"):
-        first_newline = text.find("\n")
-
-        if first_newline != -1:
-            text = text[first_newline + 1 :]
-
-        if text.rstrip().endswith("```"):
-            text = text.rstrip()[:-3]
-
-    return text.strip()
-
-
-def parse_oracle_json(text: str) -> dict[str, str]:
-    cleaned = strip_fence(text)
-
-    data = json.loads(cleaned)
-
-    if not isinstance(data, dict):
-        raise ValueError(
-            "Oracle response is not one JSON object."
-        )
-
-    answer = data.get("answer")
-    confidence = data.get("confidence")
-    reason = data.get("reason")
-
-    if not isinstance(answer, str):
-        raise ValueError(
-            "Oracle JSON requires string field 'answer'."
-        )
-
-    if confidence not in (
-        "high",
-        "medium",
-        "low",
-    ):
-        raise ValueError(
-            "Oracle JSON confidence must be high/medium/low."
-        )
-
-    if not isinstance(reason, str) or not reason.strip():
-        raise ValueError(
-            "Oracle JSON requires non-empty string field 'reason'."
-        )
-
-    return {
-        "answer": answer,
-        "confidence": confidence,
-        "reason": reason.strip(),
-    }
 
 
 def statement_path(problem_dir: Path) -> Path:
@@ -171,20 +128,46 @@ def load_suspicious_cases(
             f"Invalid V3 report summary: {report_file}"
         )
 
-    cases = summary.get("suspicious_cases")
+    suspicious = summary.get("suspicious_cases", [])
+    mixed = summary.get("mixed_cases", [])
 
-    if not isinstance(cases, list):
+    if not isinstance(suspicious, list) or not isinstance(mixed, list):
         raise ValueError(
-            f"V3 report has no suspicious_cases list: {report_file}"
+            f"V3 report has invalid disagreement case lists: {report_file}"
         )
 
-    result = []
+    result: list[str] = []
+    seen: set[str] = set()
 
-    for case in cases:
+    for case in [*suspicious, *mixed]:
         if isinstance(case, (str, int)):
-            result.append(str(case))
+            value = str(case)
+            if value not in seen:
+                seen.add(value)
+                result.append(value)
 
     return result
+
+
+def normalize_oracle_stdout(text: str) -> str:
+    """
+    Return only the final stdout from a provider response.
+
+    Some OpenAI-compatible thinking endpoints may leak a serialized
+    thinking block into message.content even though reasoning_content is
+    supposed to be separate. Keep the raw response on disk for audit,
+    but if an explicit </think> delimiter is present, compare only the
+    content after the final delimiter.
+
+    This deliberately avoids broad natural-language heuristics: without
+    an explicit delimiter, the response is left unchanged.
+    """
+    value = (text or "").strip()
+
+    if "</think>" in value:
+        value = value.rsplit("</think>", 1)[1].strip()
+
+    return value
 
 
 def usage_dict(result) -> dict[str, int]:
@@ -257,6 +240,7 @@ def run_case(
 
     client = ModelClient(
         model=ORACLE_MODEL,
+        provider=ORACLE_PROVIDER,
     )
 
     started = time.perf_counter()
@@ -266,7 +250,8 @@ def run_case(
         input_text=user_prompt,
         reasoning_effort=ORACLE_REASONING,
         max_output_tokens=ORACLE_MAX_TOKENS,
-        json_output=True,
+        json_output=False,
+        thinking_budget=ORACLE_THINKING_BUDGET,
     )
 
     elapsed = time.perf_counter() - started
@@ -274,6 +259,7 @@ def run_case(
     record: dict[str, Any] = {
         "problem": problem_dir.name,
         "case": case,
+        "provider": ORACLE_PROVIDER,
         "model": ORACLE_MODEL,
         "reasoning": ORACLE_REASONING,
         "max_tokens": ORACLE_MAX_TOKENS,
@@ -313,21 +299,13 @@ def run_case(
         record["error_message"] = result.error_message
         return record
 
-    try:
-        parsed = parse_oracle_json(
-            result.text
-        )
+    answer = normalize_oracle_stdout(result.text or "")
 
-    except (
-        ValueError,
-        json.JSONDecodeError,
-    ) as error:
-        record["oracle_status"] = "PARSE_ERROR"
-        record["error_type"] = "PARSE"
-        record["error_message"] = str(error)
+    if not answer:
+        record["oracle_status"] = "TOOL_ERROR"
+        record["error_type"] = "EMPTY"
+        record["error_message"] = "Case oracle returned empty stdout."
         return record
-
-    answer = parsed["answer"]
 
     judge_status, judge_message = compare_output(
         answer,
@@ -337,8 +315,6 @@ def run_case(
     record.update(
         {
             "oracle_answer": answer,
-            "oracle_confidence": parsed["confidence"],
-            "oracle_reason": parsed["reason"],
             "comparison": {
                 "status": judge_status,
                 "message": judge_message,
@@ -432,6 +408,7 @@ def main() -> int:
 
     print()
     print("=== VERIFIER V3.1: CASE ORACLE ===")
+    print(f"Provider   : {ORACLE_PROVIDER}")
     print(f"Model      : {ORACLE_MODEL}")
     print(f"Reasoning  : {ORACLE_REASONING}")
     print(f"Max tokens : {ORACLE_MAX_TOKENS}")
@@ -519,6 +496,7 @@ def main() -> int:
     }
 
     summary = {
+        "provider": ORACLE_PROVIDER,
         "model": ORACLE_MODEL,
         "reasoning": ORACLE_REASONING,
         "max_tokens": ORACLE_MAX_TOKENS,

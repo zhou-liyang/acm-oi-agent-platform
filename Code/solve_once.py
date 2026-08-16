@@ -12,21 +12,41 @@ from model_client import ModelClient
 
 load_dotenv()
 
+SOLVER_PROVIDER = os.getenv(
+    "MODEL_PROVIDER",
+    "deepseek",
+)
+
 SOLVER_MODEL = os.getenv(
-    "DEEPSEEK_SOLVER_MODEL",
-    "deepseek-v4-flash",
+    "MODEL_NAME",
+    os.getenv(
+        "DEEPSEEK_SOLVER_MODEL",
+        "deepseek-v4-flash",
+    ),
 )
 
 SOLVER_REASONING = os.getenv(
-    "DEEPSEEK_SOLVER_REASONING",
-    "none",
+    "MODEL_REASONING",
+    os.getenv(
+        "DEEPSEEK_SOLVER_REASONING",
+        "none",
+    ),
 )
 
 SOLVER_MAX_TOKENS = int(
     os.getenv(
-        "DEEPSEEK_SOLVER_MAX_TOKENS",
-        "3072",
+        "MODEL_MAX_TOKENS",
+        os.getenv(
+            "DEEPSEEK_SOLVER_MAX_TOKENS",
+            "3072",
+        ),
     )
+)
+
+SOLVER_THINKING_BUDGET = (
+    int(os.getenv("MODEL_THINKING_BUDGET"))
+    if os.getenv("MODEL_THINKING_BUDGET")
+    else None
 )
 
 
@@ -186,6 +206,7 @@ def main() -> int:
     try:
         client = ModelClient(
             model=SOLVER_MODEL,
+            provider=SOLVER_PROVIDER,
         )
 
     except ValueError as error:
@@ -194,6 +215,7 @@ def main() -> int:
 
     print(
         "Solver config: "
+        f"provider={SOLVER_PROVIDER}, "
         f"model={SOLVER_MODEL}, "
         f"reasoning={SOLVER_REASONING}, "
         f"max_tokens={SOLVER_MAX_TOKENS}"
@@ -217,8 +239,10 @@ def main() -> int:
         input_text=statement,
         reasoning_effort=SOLVER_REASONING,
         max_output_tokens=SOLVER_MAX_TOKENS,
+        thinking_budget=SOLVER_THINKING_BUDGET,
     )
 
+    print(f"Provider: {result.provider}")
     print(f"Model: {result.model}")
     print(
         "Usage: "

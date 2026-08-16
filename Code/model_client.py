@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import time
 from dataclasses import dataclass
@@ -9,6 +11,11 @@ from openai import (
     APITimeoutError,
     OpenAI,
 )
+
+try:
+    from model_providers import get_provider, normalize_provider
+except ModuleNotFoundError:
+    from Code.model_providers import get_provider, normalize_provider
 
 
 @dataclass
@@ -23,6 +30,7 @@ class ModelUsage:
 @dataclass
 class ModelResult:
     ok: bool
+    provider: str
     model: str
     text: str
     usage: ModelUsage
@@ -35,43 +43,46 @@ class ModelClient:
     def __init__(
         self,
         model: str | None = None,
+        provider: str | None = None,
     ) -> None:
         load_dotenv()
 
-        api_key = os.getenv(
-            "DEEPSEEK_API_KEY"
+        self.provider = normalize_provider(
+            provider or os.getenv("MODEL_PROVIDER", "deepseek")
         )
+        config = get_provider(self.provider)
 
+        api_key = os.getenv(config.api_key_env)
         if not api_key:
             raise ValueError(
-                "DEEPSEEK_API_KEY is not set."
+                f"{config.api_key_env} is not set for provider {self.provider}."
             )
 
         self.base_url = os.getenv(
-            "DEEPSEEK_BASE_URL",
-            "https://api.deepseek.com",
+            config.base_url_env,
+            config.default_base_url,
+        )
+
+        default_model = (
+            "deepseek-v4-flash"
+            if self.provider == "deepseek"
+            else "qwen3.7-flash"
         )
 
         self.model = (
             model
+            or os.getenv("MODEL_NAME")
             or os.getenv(
-                "DEEPSEEK_MODEL",
-                "deepseek-v4-flash",
+                "DEEPSEEK_MODEL" if self.provider == "deepseek" else "QWEN_MODEL",
+                default_model,
             )
         )
 
         self.timeout = float(
-            os.getenv(
-                "DEEPSEEK_TIMEOUT_SECONDS",
-                "60",
-            )
+            os.getenv(config.timeout_env, "60")
         )
-
         self.transient_retries = int(
-            os.getenv(
-                "DEEPSEEK_TRANSIENT_RETRIES",
-                "1",
-            )
+            os.getenv(config.retries_env, "1")
         )
 
         self.client = OpenAI(
@@ -82,108 +93,93 @@ class ModelClient:
         )
 
     @staticmethod
-    def _read_usage(response) -> ModelUsage:
-        usage = response.usage
+    def _int_attr(obj, name: str) -> int:
+        value = getattr(obj, name, 0)
+        return int(value or 0)
 
+    @classmethod
+    def _read_usage(cls, response) -> ModelUsage:
+        usage = getattr(response, "usage", None)
         if usage is None:
             return ModelUsage()
 
+        prompt_tokens = cls._int_attr(usage, "prompt_tokens")
+        output_tokens = cls._int_attr(usage, "completion_tokens")
+
+        cached = cls._int_attr(usage, "prompt_cache_hit_tokens")
+        if not cached:
+            prompt_details = getattr(usage, "prompt_tokens_details", None)
+            if prompt_details is not None:
+                cached = cls._int_attr(prompt_details, "cached_tokens")
+
+        missed = cls._int_attr(usage, "prompt_cache_miss_tokens")
+        if not missed and prompt_tokens >= cached:
+            missed = prompt_tokens - cached
+
+        reasoning = cls._int_attr(usage, "reasoning_tokens")
         completion_details = getattr(
             usage,
             "completion_tokens_details",
             None,
         )
-
-        cached = getattr(
-            usage,
-            "prompt_cache_hit_tokens",
-            0,
-        )
-
-        missed = getattr(
-            usage,
-            "prompt_cache_miss_tokens",
-            0,
-        )
-
-        prompt_tokens = getattr(
-            usage,
-            "prompt_tokens",
-            0,
-        )
-
-        if not missed and prompt_tokens >= cached:
-            missed = prompt_tokens - cached
+        if not reasoning and completion_details is not None:
+            reasoning = cls._int_attr(
+                completion_details,
+                "reasoning_tokens",
+            )
 
         return ModelUsage(
             input_tokens=prompt_tokens,
             cached_tokens=cached,
             cache_miss_tokens=missed,
-            output_tokens=getattr(
-                usage,
-                "completion_tokens",
-                0,
-            ),
-            reasoning_tokens=(
-                getattr(
-                    completion_details,
-                    "reasoning_tokens",
-                    0,
-                )
-                if completion_details
-                else 0
-            ),
+            output_tokens=output_tokens,
+            reasoning_tokens=reasoning,
         )
 
     @staticmethod
-    def _thinking_config(
-        reasoning_effort: str,
-    ) -> tuple[dict, str | None]:
-        effort = (
-            reasoning_effort
-            .strip()
-            .lower()
-        )
-
-        if effort in (
-            "",
-            "none",
-            "disabled",
-            "off",
-        ):
-            return (
-                {
-                    "thinking": {
-                        "type": "disabled",
-                    }
-                },
-                None,
-            )
-
-        mapping = {
+    def _normalize_effort(reasoning_effort: str) -> str:
+        effort = reasoning_effort.strip().lower()
+        aliases = {
+            "": "none",
+            "disabled": "none",
+            "off": "none",
+            "none": "none",
             "low": "low",
             "medium": "high",
             "high": "high",
             "xhigh": "high",
             "max": "max",
         }
-
-        mapped = mapping.get(effort)
-
-        if mapped is None:
+        normalized = aliases.get(effort)
+        if normalized is None:
             raise ValueError(
-                "Unsupported reasoning effort: "
-                f"{reasoning_effort}"
+                f"Unsupported reasoning effort: {reasoning_effort}"
             )
+        return normalized
 
-        return (
-            {
-                "thinking": {
-                    "type": "enabled",
-                }
-            },
-            mapped,
-        )
+    def _provider_request_options(
+        self,
+        reasoning_effort: str,
+        thinking_budget: int | None,
+    ) -> tuple[dict, dict]:
+        effort = self._normalize_effort(reasoning_effort)
+        extra_body: dict = {}
+        standard: dict = {}
+
+        if self.provider == "deepseek":
+            if effort == "none":
+                extra_body["thinking"] = {"type": "disabled"}
+            else:
+                extra_body["thinking"] = {"type": "enabled"}
+                standard["reasoning_effort"] = effort
+
+        elif self.provider == "qwen":
+            enabled = effort != "none"
+            extra_body["enable_thinking"] = enabled
+            if enabled and thinking_budget is not None:
+                extra_body["thinking_budget"] = int(thinking_budget)
+
+        return extra_body, standard
 
     def generate(
         self,
@@ -192,17 +188,17 @@ class ModelClient:
         reasoning_effort: str = "none",
         max_output_tokens: int = 2048,
         json_output: bool = False,
+        thinking_budget: int | None = None,
     ) -> ModelResult:
         try:
-            extra_body, mapped_effort = (
-                self._thinking_config(
-                    reasoning_effort
-                )
+            extra_body, standard = self._provider_request_options(
+                reasoning_effort,
+                thinking_budget,
             )
-
         except ValueError as error:
             return ModelResult(
                 ok=False,
+                provider=self.provider,
                 model=self.model,
                 text="",
                 usage=ModelUsage(),
@@ -210,159 +206,115 @@ class ModelClient:
                 error_message=str(error),
             )
 
-        attempts = (
-            self.transient_retries + 1
-        )
-
+        attempts = self.transient_retries + 1
         last_error_type = ""
         last_error_message = ""
 
-        for attempt in range(
-            1,
-            attempts + 1,
-        ):
+        for attempt in range(1, attempts + 1):
             try:
                 request = {
                     "model": self.model,
                     "messages": [
-                        {
-                            "role": "system",
-                            "content": instructions,
-                        },
-                        {
-                            "role": "user",
-                            "content": input_text,
-                        },
+                        {"role": "system", "content": instructions},
+                        {"role": "user", "content": input_text},
                     ],
                     "max_tokens": max_output_tokens,
-                    "extra_body": extra_body,
+                    **standard,
                 }
 
-                if mapped_effort is not None:
-                    request[
-                        "reasoning_effort"
-                    ] = mapped_effort
+                if extra_body:
+                    request["extra_body"] = extra_body
 
                 if json_output:
                     request["response_format"] = {
                         "type": "json_object",
                     }
 
-                response = (
-                    self.client.chat.completions.create(
-                        **request
-                    )
-                )
+                response = self.client.chat.completions.create(**request)
 
                 if not response.choices:
                     return ModelResult(
                         ok=False,
+                        provider=self.provider,
                         model=self.model,
                         text="",
-                        usage=self._read_usage(
-                            response
-                        ),
+                        usage=self._read_usage(response),
                         error_type="EMPTY",
                         error_message=(
-                            "DeepSeek returned "
-                            "no choices."
+                            f"{self.provider} returned no choices."
                         ),
                     )
 
                 choice = response.choices[0]
-                text = (
-                    choice.message.content
-                    or ""
-                ).strip()
+                text = (choice.message.content or "").strip()
+                finish_reason = choice.finish_reason or ""
 
-                if choice.finish_reason == "length":
+                if finish_reason == "length":
                     return ModelResult(
                         ok=False,
+                        provider=self.provider,
                         model=self.model,
                         text=text,
-                        usage=self._read_usage(
-                            response
-                        ),
-                        error_type=(
-                            "OUTPUT_INCOMPLETE"
-                        ),
-                        error_message=(
-                            "Model output reached "
-                            "the token limit."
-                        ),
+                        usage=self._read_usage(response),
+                        error_type="OUTPUT_INCOMPLETE",
+                        error_message="Model output reached the token limit.",
                     )
 
-                if choice.finish_reason in (
+                if finish_reason in (
                     "content_filter",
                     "insufficient_system_resource",
                 ):
                     return ModelResult(
                         ok=False,
+                        provider=self.provider,
                         model=self.model,
                         text=text,
-                        usage=self._read_usage(
-                            response
-                        ),
-                        error_type=(
-                            choice.finish_reason.upper()
-                        ),
+                        usage=self._read_usage(response),
+                        error_type=finish_reason.upper(),
                         error_message=(
-                            "DeepSeek stopped before "
-                            "a normal completion."
+                            f"{self.provider} stopped before a normal completion."
                         ),
                     )
 
                 return ModelResult(
                     ok=True,
+                    provider=self.provider,
                     model=self.model,
                     text=text,
-                    usage=self._read_usage(
-                        response
-                    ),
+                    usage=self._read_usage(response),
                 )
 
             except APITimeoutError:
                 last_error_type = "TIMEOUT"
                 last_error_message = (
-                    "DeepSeek API request "
-                    "timed out."
+                    f"{self.provider} API request timed out."
                 )
-
             except APIConnectionError as error:
-                last_error_type = (
-                    "CONNECTION"
-                )
-                last_error_message = str(
-                    error
-                )
-
+                last_error_type = "CONNECTION"
+                last_error_message = str(error)
             except APIStatusError as error:
                 return ModelResult(
                     ok=False,
+                    provider=self.provider,
                     model=self.model,
                     text="",
                     usage=ModelUsage(),
                     error_type="HTTP",
-                    error_message=str(
-                        error
-                    ),
-                    status_code=(
-                        error.status_code
-                    ),
+                    error_message=str(error),
+                    status_code=error.status_code,
                 )
 
             if attempt < attempts:
                 print(
-                    "Model request transient "
-                    f"failure "
-                    f"({last_error_type}); "
-                    "retrying...",
+                    "Model request transient failure "
+                    f"({self.provider}/{last_error_type}); retrying...",
                     flush=True,
                 )
                 time.sleep(1.0)
 
         return ModelResult(
             ok=False,
+            provider=self.provider,
             model=self.model,
             text="",
             usage=ModelUsage(),

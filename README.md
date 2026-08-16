@@ -1,156 +1,192 @@
-# ACM/OI Agent Platform
+# ACM/OI Verifier Agent
 
-Agent-based tooling platform for ACM/OI problem setting, validation, testing, and workflow automation.
+An evidence-driven verification pipeline for ACM/OI problem packages.
 
-## Goal
+The project is not intended to treat an LLM as an answer key. Its purpose is to combine deterministic package checks, independent solver evidence, local judge replay, cross-provider disagreement analysis, and bounded strong-model adjudication into an auditable verification workflow.
 
-The long-term goal of this project is an ACM/OI problem verification agent.
+## Why this project exists
 
-The Solver is an important capability of the verifier, but it is not the final product. The verifier should combine deterministic checks, independent solving, judging, disagreement analysis, and adjudication instead of treating a single model answer as ground truth.
+Problem setting has several failure modes that are difficult to catch with ordinary sample testing alone:
 
-## Current Architecture
+- statement / metadata / test-package inconsistencies;
+- incorrect expected outputs;
+- weak or incomplete standard solutions;
+- hidden boundary cases that a single solver misses;
+- false confidence caused by several correlated model attempts making the same mistake.
 
-### Model
+The verifier therefore separates **evidence generation** from **final judgment**. Official `.out` files are not automatically trusted, and model agreement is not automatically treated as ground truth.
 
+## V1 verification pipeline
+
+```text
+Problem package
+    |
+    v
+[V1] deterministic package checks
+    |
+    +-- mechanical failure ----------------------> PACKAGE_FAIL
+    |
+    v
+[V2] two independent whole-problem solves
+     DeepSeek V4 Flash / non-thinking
+     Qwen 3.7 Flash / non-thinking
+    |
+    +-- both candidates AC ----------------------> TESTS_CORROBORATED
+    |
+    v
+[V3] deterministic candidate replay
+     compare candidate outputs case by case
+    |
+    +-- no substantive case disagreement --------> INCONCLUSIVE
+    |
+    v
+[Adjudication] two strong independent case oracles
+     DeepSeek V4 Pro / low reasoning
+     Qwen 3.7 Plus / bounded low thinking
+    |
+    v
+Four-opinion case decision
+    3:1 / 4:0 supports expected output ----------> TESTS_SUPPORTED_AFTER_ADJUDICATION
+    3:1 / 4:0 contradicts expected output -------> REVIEW_REQUIRED
+    2:2 / incomplete evidence -------------------> INCONCLUSIVE / TOOL_ERROR
+```
+
+The Agent never edits expected-output files automatically.
+
+## Core design rules
+
+1. Deterministic checks are preferred whenever they can answer the question.
+2. DeepSeek and Qwen provide independent first-pass evidence; same-provider resampling is not used as a voting quorum.
+3. A non-AC model candidate is evidence of solver uncertainty, not proof that the package is wrong.
+4. Stronger and more expensive models are called only for case-level substantive disagreement.
+5. The strong models receive only the statement and one concrete input for the disputed case; they do not see the official output, candidate source code, previous votes, or test purpose.
+6. A 3:1 or 4:0 four-opinion majority determines the evidence direction. A 2:2 split stays inconclusive.
+7. Even a strong majority against an existing `.out` produces `REVIEW_REQUIRED`; the Agent does not mutate problem data automatically.
+
+## Repository structure
+
+### Model routing
+
+- `Code/model_providers.py`
+  - Provider definitions and API-key / base-URL configuration.
+- `Code/model_router.py`
+  - Centralized initial and adjudication model policy.
 - `Code/model_client.py`
-  - DeepSeek API client.
-  - Handles model selection, timeout, retries, token usage, reasoning usage, and prompt-cache statistics.
-
-- `Code/model_test.py`
-  - Minimal model connectivity test.
-
-- `Code/balance_client.py`
-  - Reads API account balance for cost tracking.
+  - OpenAI-compatible provider client for DeepSeek and Qwen.
+  - Handles timeouts, retries, token usage, cache statistics, and provider-specific thinking-mode configuration.
+- `Code/model_routing_test.py`
+  - Prints the routing snapshot and key presence without an API call.
+  - `--live` performs one tiny non-thinking connectivity request to each initial provider.
 
 ### Solver
 
 - `Code/solve_once.py`
-  - Performs one independent solve from the problem statement.
-  - Extracts a complete C++ source file and judges it against the local tests.
-
-- `Code/repair_once.py`
-  - Repairs a failed candidate using limited judge evidence and selected failed cases.
-
+  - Performs one independent whole-problem solve and locally judges the generated C++17 program.
 - `Code/solve_agent.py`
-  - Orchestrates the current solver pipeline.
-  - Coordinates initial solving, repair attempts, judging, final source selection, timing, and cost observation.
+  - Earlier solver-oriented orchestration retained as a lower-level capability.
 
-- `Code/batch_private.py`
-  - Runs the Solver Agent over the private problem pool.
+The Solver is a verifier component, not the final product.
 
 ### Judge
 
-- `Code/judge.py`
-  - Compiles and judges one source against one input/output pair.
-
-- `Code/judge_tests.py`
-  - Runs a source against a complete test set.
-
-- `Code/judge_problem.py`
-  - Loads problem metadata and judges one source against one complete problem package.
-
-- `Code/agent_tool.py`
-  - Command-line tool entry used by Agent components.
-
-### Benchmark
-
-- `Code/benchmark_v3.py`
-  - Runs the current Solver pipeline over benchmark problems.
-  - Records AC stage, elapsed time, API calls, token usage, reasoning usage, and output artifacts.
-
-- `Problems/BenchmarkV3`
-  - Stable benchmark problem set used for regression and model-strategy comparison.
+The project uses a local deterministic C++ compile / run / compare toolchain. Generated candidates are always evaluated locally rather than accepted from model text alone.
 
 ### Verifier
 
-The current verifier implementation is still an evolving pipeline.
-
 - `Code/verifier_v1.py`
-  - Deterministic package-level validation.
-  - Checks problem metadata, statement/test structure, and other static package properties.
-
+  - Deterministic package-level checks.
 - `Code/verifier_v2.py`
-  - Performs multiple independent verification solves.
-  - Uses deliberately varied independent-solving instructions and records judge results and model usage.
-
+  - Runs exactly one independent whole-problem candidate from DeepSeek and one from Qwen.
+  - No repair feedback and no access to expected outputs during generation.
 - `Code/verifier_v3.py`
-  - Replays independent candidate programs against test cases.
-  - Compares candidate behavior and detects output agreement/disagreement patterns for further investigation.
-
+  - Replays both candidates against every local case and builds a deterministic disagreement matrix.
 - `Code/case_oracle_v3_1.py`
-  - Independent per-case adjudication tool.
-  - Receives only the statement and one concrete input and attempts to derive the exact required stdout without seeing the official answer.
-
-- `Code/verify_state.py`
-  - Aggregates evidence from verifier stages and adjudication results.
-  - Produces explicit final verification states such as:
-    - `PACKAGE_FAIL`
-    - `TESTS_CORROBORATED`
-    - `TESTS_SUPPORTED_AFTER_ADJUDICATION`
-    - `REVIEW_REQUIRED`
-    - `INCONCLUSIVE`
-    - `TOOL_ERROR`
-    - `BLOCKED`
-
+  - Strong per-case oracle used only after a substantive disagreement is found.
 - `Code/verifier_agent.py`
-  - Unified verifier orchestration entry point.
-  - Runs deterministic V1 checks, Flash-none V2 independent solving, local V3 disagreement analysis, and Pro-high case adjudication only when shared disagreement exists.
+  - Unified V1 entry point and final evidence-state aggregation.
 
-## Problem Pools
+## Model policy
 
-### BenchmarkV3
+Initial evidence:
 
-`Problems/BenchmarkV3` is the controlled regression set.
+- DeepSeek: `deepseek-v4-flash`, thinking disabled, `max_tokens=3072`;
+- Qwen: `qwen3.7-flash`, thinking disabled, `max_tokens=3072`.
 
-Its purpose is to compare solver/verifier behavior across code revisions and model strategies.
+Escalation evidence:
 
-### Private
+- DeepSeek: `deepseek-v4-pro`, low reasoning, `max_tokens=4096`;
+- Qwen: `qwen3.7-plus`, bounded low thinking, `max_tokens=4096`, `thinking_budget=512`.
 
-`Problems/Private` contains hidden problems used to test whether the Agent generalizes beyond the benchmark set.
+Strong case oracles return raw stdout directly rather than wrapping answers in JSON. This avoids schema drift and removes explanation-token overhead during adjudication.
 
-The current development scope focuses primarily on Bronze and Silver problems, with Gold used only where useful. Problems whose essential information depends on images rather than the supplied text are not part of the primary automated verification set at this stage.
+The policy is centralized in `Code/model_router.py` so model changes do not need to be duplicated across verifier stages.
 
-## Verification Principles
+## Configuration
 
-1. Official test output is not assumed to be correct merely because it is official.
-2. Model output is not assumed to be correct merely because several model attempts agree.
-3. Independent solvers are evidence providers, not ground truth.
-4. Judge disagreements should trigger investigation rather than automatic answer replacement.
-5. Stronger and more expensive models should be used only when cheaper evidence is insufficient.
-6. Deterministic checks should be preferred whenever a deterministic check can answer the question.
-7. Verification results should preserve enough evidence to explain why a problem reached its final state.
+Copy `.env.example` to `.env` and provide your own API keys:
 
-## Current Development State
+```env
+DEEPSEEK_API_KEY=...
+DASHSCOPE_API_KEY=...
+```
 
-Completed or usable:
+Optional provider endpoint overrides are also supported:
 
-- DeepSeek model client and usage accounting.
-- Local C++ compile/run/judge toolchain.
-- Initial Solver Agent with repair stages.
-- Private problem batch runner.
-- Benchmark V3 runner.
-- Static Verifier V1.
-- Independent-solving Verifier V2.
-- Differential evidence analysis in Verifier V3.
-- Per-case Oracle V3.1.
-- Verification-state aggregation.
-- Unified Verifier Agent orchestration.
+```env
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+```
 
-Validated smoke paths:
+Never commit the real `.env` file.
 
-- Live short-circuit: `milk` reached `TESTS_CORROBORATED` on the first Flash-none attempt without entering V3 or adjudication.
-- Real-problem escalation gate: `cut` remained `INCONCLUSIVE` without shared disagreement, and therefore did not trigger Pro-high adjudication.
-- Deterministic orchestration tests cover supported adjudication, contradicted adjudication, and no-shared-disagreement gating without model API calls.
+## Quick check
 
-Next:
+No API calls:
 
-1. Expand regression coverage across the private and benchmark pools.
-2. Improve verifier evidence reporting, failure classification, and cost accounting.
-3. Continue tuning escalation policy before expanding problem difficulty.
+```powershell
+.\.venv\Scripts\python.exe Code\verifier_agent.py --check
+```
 
-## Repository Hygiene
+Routing-only check:
 
-- `Build` contains disposable generated artifacts and may be regenerated as needed.
-- `Backup` contains only selected recovery assets.
-- Temporary benchmark, compile-cache, and cleanup artifacts should not be committed.
-- Historical experimental scripts should not remain in the main `Code` directory once superseded.
+```powershell
+.\.venv\Scripts\python.exe Code\model_routing_test.py
+```
+
+Tiny live connectivity check after both keys are configured:
+
+```powershell
+.\.venv\Scripts\python.exe Code\model_routing_test.py --live
+```
+
+## Run one verification
+
+```powershell
+.\.venv\Scripts\python.exe Code\verifier_agent.py `
+    Problems\Private `
+    --names milk `
+    --output Build\VerifierV1
+```
+
+The output directory keeps stage reports, candidate sources, logs, usage information, disagreement evidence, and the final `summary.json`.
+
+## Final states
+
+- `PACKAGE_FAIL` — deterministic package checks failed;
+- `TESTS_CORROBORATED` — both initial providers independently produced AC candidates;
+- `TESTS_SUPPORTED_AFTER_ADJUDICATION` — every escalated case reached a 3:1 or 4:0 majority supporting the existing expected output;
+- `REVIEW_REQUIRED` — at least one escalated case reached a 3:1 or 4:0 majority contradicting the existing expected output;
+- `INCONCLUSIVE` — available evidence is insufficient or remains split;
+- `TOOL_ERROR` — a required tool / API stage failed;
+- `BLOCKED` — required local prerequisites are missing.
+
+## Problem pools
+
+- `Problems/BenchmarkV3` is the controlled regression set used for policy and code comparisons.
+- `Problems/Private` is a hidden local validation pool and is not intended to be published as part of the repository.
+
+The automated V1 workflow currently assumes the selected input set is suitable for ordinary text-based judging. The workflow deliberately does not try to guess and silently exclude image-dependent, special-judge, or interactive problems from names or package heuristics.
+
+## Current scope
+
+V1 focuses on making the complete verifier pipeline small, reproducible, cost-bounded, and explainable. Expanding to harder problem classes, richer special-judge support, or more providers is deliberately deferred until this baseline is stable.

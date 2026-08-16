@@ -31,3 +31,6 @@ dist/
 
 # Keep expected outputs for judge tests
 !Problems/**/Tests/*.out
+
+# Keep public environment template
+!.env.example
