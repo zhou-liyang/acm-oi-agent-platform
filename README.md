@@ -121,6 +121,20 @@ Strong case oracles return raw stdout directly rather than wrapping answers in J
 
 The policy is centralized in `Code/model_router.py` so model changes do not need to be duplicated across verifier stages.
 
+## Installation
+
+Requirements:
+
+- Python 3.10 or later;
+- a C++17 compiler available as `g++`.
+
+Create a virtual environment and install the Python dependencies:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
 ## Configuration
 
 Copy `.env.example` to `.env` and provide your own API keys:
@@ -161,14 +175,16 @@ Tiny live connectivity check after both keys are configured:
 
 ## Run one verification
 
+The repository includes `Problems/sum` as a minimal public problem package for reproducing the verifier workflow.
+
 ```powershell
 .\.venv\Scripts\python.exe Code\verifier_agent.py `
-    Problems\Private `
-    --names milk `
+    Problems `
+    --names sum `
     --output Build\VerifierV1
 ```
 
-The output directory keeps stage reports, candidate sources, logs, usage information, disagreement evidence, and the final `summary.json`.
+This command makes live API calls to both configured providers. The output directory keeps stage reports, candidate sources, logs, usage information, disagreement evidence, and the final `summary.json`.
 
 ## Final states
 
@@ -182,6 +198,7 @@ The output directory keeps stage reports, candidate sources, logs, usage informa
 
 ## Problem pools
 
+- `Problems/sum` is a minimal public example package for reproducing the verifier workflow.
 - `Problems/BenchmarkV3` is the controlled regression set used for policy and code comparisons.
 - `Problems/Private` is a hidden local validation pool and is not intended to be published as part of the repository.
 
