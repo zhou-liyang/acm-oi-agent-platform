@@ -45,7 +45,7 @@ def write_json(
     )
 
 
-def index_v1(
+def index_package_check(
     summary: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
@@ -69,7 +69,7 @@ def index_v1(
     return result
 
 
-def index_v2(
+def index_solve_check(
     summary: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
@@ -86,7 +86,7 @@ def index_v2(
     return result
 
 
-def index_v3(
+def index_case_compare(
     summary: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
@@ -137,36 +137,36 @@ def merge_adjudications(
 
 def resolve_problem(
     name: str,
-    v1: dict[str, dict[str, Any]],
-    v2: dict[str, dict[str, Any]],
-    v3: dict[str, dict[str, Any]],
+    package_check: dict[str, dict[str, Any]],
+    solve_check: dict[str, dict[str, Any]],
+    case_compare: dict[str, dict[str, Any]],
     adjudications: dict[tuple[str, str], dict[str, Any]],
 ) -> dict[str, Any]:
-    v1_item = v1.get(name)
-    v2_item = v2.get(name)
-    v3_item = v3.get(name)
+    package_item = package_check.get(name)
+    solve_item = solve_check.get(name)
+    compare_item = case_compare.get(name)
 
     evidence: list[dict[str, Any]] = []
 
-    if v1_item is None:
+    if package_item is None:
         return {
             "problem": name,
             "state": "BLOCKED",
-            "message": "No Verifier V1 result is available.",
+            "message": "No Package Check result is available.",
             "evidence": evidence,
         }
 
-    v1_overall = v1_item.get("overall")
+    package_overall = package_item.get("overall")
 
     evidence.append(
         {
-            "stage": "V1",
-            "result": v1_overall,
+            "stage": "PACKAGE_CHECK",
+            "result": package_overall,
             "meaning": "Mechanical package consistency.",
         }
     )
 
-    if v1_overall == "FAIL":
+    if package_overall == "FAIL":
         return {
             "problem": name,
             "state": "PACKAGE_FAIL",
@@ -177,7 +177,7 @@ def resolve_problem(
             "evidence": evidence,
         }
 
-    if v2_item is None:
+    if solve_item is None:
         return {
             "problem": name,
             "state": "INCONCLUSIVE",
@@ -185,21 +185,21 @@ def resolve_problem(
             "evidence": evidence,
         }
 
-    v2_evidence = v2_item.get("evidence")
+    solve_evidence = solve_item.get("evidence")
 
     evidence.append(
         {
-            "stage": "V2",
-            "result": v2_evidence,
+            "stage": "SOLVE_CHECK",
+            "result": solve_evidence,
             "meaning": (
                 "Fresh whole-problem solver evidence; "
                 "non-AC is never treated as proof of a bad package."
             ),
-            "attempts_run": v2_item.get("attempts_run"),
+            "attempts_run": solve_item.get("attempts_run"),
         }
     )
 
-    if v2_evidence == "CORROBORATED":
+    if solve_evidence == "CORROBORATED":
         return {
             "problem": name,
             "state": "TESTS_CORROBORATED",
@@ -210,7 +210,7 @@ def resolve_problem(
             "evidence": evidence,
         }
 
-    if v2_evidence == "TOOL_ERROR":
+    if solve_evidence == "TOOL_ERROR":
         return {
             "problem": name,
             "state": "TOOL_ERROR",
@@ -218,7 +218,7 @@ def resolve_problem(
             "evidence": evidence,
         }
 
-    if v2_evidence == "BLOCKED":
+    if solve_evidence == "BLOCKED":
         return {
             "problem": name,
             "state": "BLOCKED",
@@ -226,7 +226,7 @@ def resolve_problem(
             "evidence": evidence,
         }
 
-    if v2_evidence != "INCONCLUSIVE":
+    if solve_evidence != "INCONCLUSIVE":
         return {
             "problem": name,
             "state": "INCONCLUSIVE",
@@ -236,7 +236,7 @@ def resolve_problem(
             "evidence": evidence,
         }
 
-    if v3_item is None:
+    if compare_item is None:
         return {
             "problem": name,
             "state": "INCONCLUSIVE",
@@ -247,16 +247,16 @@ def resolve_problem(
             "evidence": evidence,
         }
 
-    v3_status = v3_item.get("status")
+    compare_status = compare_item.get("status")
     suspicious_cases = [
         str(case)
-        for case in v3_item.get("suspicious_cases", [])
+        for case in compare_item.get("suspicious_cases", [])
     ]
 
     evidence.append(
         {
-            "stage": "V3",
-            "result": v3_status,
+            "stage": "CASE_COMPARE",
+            "result": compare_status,
             "meaning": (
                 "Local disagreement matrix across already-generated "
                 "candidate programs. Shared disagreement is a trigger "
@@ -379,25 +379,25 @@ def resolve_problem(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Aggregate Verifier V1/V2/V3 and case-adjudication evidence "
+            "Aggregate Package Check, Solve Check, Case Compare, and Case Review evidence "
             "into explicit problem-level evidence states."
         )
     )
 
     parser.add_argument(
-        "--v1",
+        "--package-check",
         type=Path,
         required=True,
     )
 
     parser.add_argument(
-        "--v2",
+        "--solve-check",
         type=Path,
         required=True,
     )
 
     parser.add_argument(
-        "--v3",
+        "--case-compare",
         type=Path,
         required=True,
     )
@@ -427,14 +427,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    v1 = index_v1(
-        read_json(args.v1)
+    package_check = index_package_check(
+        read_json(args.package_check)
     )
-    v2 = index_v2(
-        read_json(args.v2)
+    solve_check = index_solve_check(
+        read_json(args.solve_check)
     )
-    v3 = index_v3(
-        read_json(args.v3)
+    case_compare = index_case_compare(
+        read_json(args.case_compare)
     )
     adjudications = merge_adjudications(
         args.adjudication
@@ -443,9 +443,9 @@ def main() -> int:
     problems = [
         resolve_problem(
             name,
-            v1,
-            v2,
-            v3,
+            package_check,
+            solve_check,
+            case_compare,
             adjudications,
         )
         for name in args.names

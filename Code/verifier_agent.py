@@ -12,11 +12,11 @@ from typing import Any
 from dotenv import load_dotenv
 
 try:
-    from verifier_v1 import verify_problem
+    from package_check import verify_problem
     from model_router import adjudication_routes, initial_routes, routing_snapshot
     from model_providers import get_provider
 except ModuleNotFoundError:
-    from Code.verifier_v1 import verify_problem
+    from Code.package_check import verify_problem
     from Code.model_router import adjudication_routes, initial_routes, routing_snapshot
     from Code.model_providers import get_provider
 
@@ -54,10 +54,10 @@ def required_tools() -> list[Path]:
         root / "model_client.py",
         root / "model_providers.py",
         root / "model_router.py",
-        root / "verifier_v1.py",
-        root / "verifier_v2.py",
-        root / "verifier_v3.py",
-        root / "case_oracle_v3_1.py",
+        root / "package_check.py",
+        root / "solve_check.py",
+        root / "case_compare.py",
+        root / "case_review.py",
     ]
 
 
@@ -106,7 +106,7 @@ def run_process(
     return process.returncode, text, elapsed
 
 
-def load_v2_problem(summary_file: Path, name: str) -> dict[str, Any] | None:
+def load_solve_problem(summary_file: Path, name: str) -> dict[str, Any] | None:
     if not summary_file.is_file():
         return None
     summary = read_json(summary_file)
@@ -116,7 +116,7 @@ def load_v2_problem(summary_file: Path, name: str) -> dict[str, Any] | None:
     return None
 
 
-def load_v3_problem(summary_file: Path, name: str) -> dict[str, Any] | None:
+def load_compare_problem(summary_file: Path, name: str) -> dict[str, Any] | None:
     if not summary_file.is_file():
         return None
     summary = read_json(summary_file)
@@ -137,10 +137,10 @@ def load_adjudication_records(summary_file: Path, name: str) -> list[dict[str, A
     ]
 
 
-def run_v2(problem_root: Path, name: str, stage_dir: Path) -> dict[str, Any]:
+def run_solve_check(problem_root: Path, name: str, stage_dir: Path) -> dict[str, Any]:
     command = [
         sys.executable,
-        str(code_dir() / "verifier_v2.py"),
+        str(code_dir() / "solve_check.py"),
         str(problem_root),
         "--output",
         str(stage_dir),
@@ -151,13 +151,13 @@ def run_v2(problem_root: Path, name: str, stage_dir: Path) -> dict[str, Any]:
     ]
     exit_code, _, elapsed = run_process(
         command,
-        log_file=stage_dir / "agent_v2.log",
+        log_file=stage_dir / "solve_check.log",
     )
-    item = load_v2_problem(stage_dir / "summary.json", name)
+    item = load_solve_problem(stage_dir / "summary.json", name)
     if item is None:
         return {
             "evidence": "TOOL_ERROR",
-            "message": "Verifier V2 did not produce a usable summary.",
+            "message": "Solve Check did not produce a usable summary.",
             "exit_code": exit_code,
             "elapsed_seconds": round(elapsed, 2),
         }
@@ -168,17 +168,17 @@ def run_v2(problem_root: Path, name: str, stage_dir: Path) -> dict[str, Any]:
     }
 
 
-def run_v3(
+def run_case_compare(
     problem_root: Path,
-    v2_dir: Path,
+    solve_dir: Path,
     name: str,
     stage_dir: Path,
 ) -> dict[str, Any]:
     command = [
         sys.executable,
-        str(code_dir() / "verifier_v3.py"),
+        str(code_dir() / "case_compare.py"),
         str(problem_root),
-        str(v2_dir),
+        str(solve_dir),
         "--output",
         str(stage_dir),
         "--names",
@@ -186,13 +186,13 @@ def run_v3(
     ]
     exit_code, _, elapsed = run_process(
         command,
-        log_file=stage_dir / "agent_v3.log",
+        log_file=stage_dir / "case_compare.log",
     )
-    item = load_v3_problem(stage_dir / "summary.json", name)
+    item = load_compare_problem(stage_dir / "summary.json", name)
     if item is None:
         return {
             "status": "TOOL_ERROR",
-            "message": "Verifier V3 did not produce a usable summary.",
+            "message": "Case Compare did not produce a usable summary.",
             "exit_code": exit_code,
             "elapsed_seconds": round(elapsed, 2),
             "suspicious_cases": [],
@@ -207,7 +207,7 @@ def run_v3(
 
 def run_one_adjudicator(
     problem_root: Path,
-    v3_dir: Path,
+    compare_dir: Path,
     name: str,
     stage_dir: Path,
     route,
@@ -228,9 +228,9 @@ def run_one_adjudicator(
 
     command = [
         sys.executable,
-        str(code_dir() / "case_oracle_v3_1.py"),
+        str(code_dir() / "case_review.py"),
         str(problem_root),
-        str(v3_dir),
+        str(compare_dir),
         "--output",
         str(stage_dir),
         "--names",
@@ -256,7 +256,7 @@ def run_one_adjudicator(
 
 def run_adjudicators(
     problem_root: Path,
-    v3_dir: Path,
+    compare_dir: Path,
     name: str,
     stage_dir: Path,
 ) -> list[dict[str, Any]]:
@@ -265,7 +265,7 @@ def run_adjudicators(
         results.append(
             run_one_adjudicator(
                 problem_root,
-                v3_dir,
+                compare_dir,
                 name,
                 stage_dir / route.provider,
                 route,
@@ -274,9 +274,9 @@ def run_adjudicators(
     return results
 
 
-def provider_by_source(v2: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def provider_by_source(solve_result: dict[str, Any]) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
-    for attempt in v2.get("attempts", []):
+    for attempt in solve_result.get("attempts", []):
         if not isinstance(attempt, dict):
             continue
         source = attempt.get("source")
@@ -285,8 +285,8 @@ def provider_by_source(v2: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
-def load_v3_report(v3_dir: Path, name: str) -> dict[str, Any] | None:
-    path = v3_dir / name / "report.json"
+def load_compare_report(compare_dir: Path, name: str) -> dict[str, Any] | None:
+    path = compare_dir / name / "report.json"
     if not path.is_file():
         return None
     data = read_json(path)
@@ -294,15 +294,15 @@ def load_v3_report(v3_dir: Path, name: str) -> dict[str, Any] | None:
 
 
 def initial_case_votes(
-    v3_report: dict[str, Any],
-    v2: dict[str, Any],
+    compare_report: dict[str, Any],
+    solve_result: dict[str, Any],
     contested_cases: list[str],
 ) -> dict[str, list[dict[str, Any]]]:
-    source_meta = provider_by_source(v2)
+    source_meta = provider_by_source(solve_result)
     wanted = set(contested_cases)
     result = {case: [] for case in contested_cases}
 
-    for case_report in v3_report.get("cases", []):
+    for case_report in compare_report.get("cases", []):
         if not isinstance(case_report, dict):
             continue
         case = str(case_report.get("case"))
@@ -487,17 +487,17 @@ def verify_one(problem_root: Path, name: str, output_root: Path) -> dict[str, An
     problem_output = (output_root / name).resolve()
     evidence: list[dict[str, Any]] = []
 
-    v1_report = verify_problem(problem_dir)
-    write_json(problem_output / "V1" / "report.json", v1_report)
+    package_report = verify_problem(problem_dir)
+    write_json(problem_output / "PackageCheck" / "report.json", package_report)
     evidence.append(
         {
-            "stage": "V1",
-            "result": v1_report["overall"],
-            "counts": v1_report["counts"],
+            "stage": "PACKAGE_CHECK",
+            "result": package_report["overall"],
+            "counts": package_report["counts"],
         }
     )
 
-    if v1_report["overall"] == "FAIL":
+    if package_report["overall"] == "FAIL":
         return {
             "problem": name,
             "state": "PACKAGE_FAIL",
@@ -505,13 +505,13 @@ def verify_one(problem_root: Path, name: str, output_root: Path) -> dict[str, An
             "evidence": evidence,
         }
 
-    v2_dir = problem_output / "V2"
-    v2 = run_v2(problem_root, name, v2_dir)
+    solve_dir = problem_output / "SolveCheck"
+    solve_result = run_solve_check(problem_root, name, solve_dir)
     evidence.append(
         {
-            "stage": "V2",
-            "result": v2.get("evidence"),
-            "attempts_run": v2.get("attempts_run"),
+            "stage": "SOLVE_CHECK",
+            "result": solve_result.get("evidence"),
+            "attempts_run": solve_result.get("attempts_run"),
             "providers": [
                 {
                     "provider": item.get("provider"),
@@ -520,35 +520,35 @@ def verify_one(problem_root: Path, name: str, output_root: Path) -> dict[str, An
                     "judge": item.get("judge"),
                     "usage": item.get("usage"),
                 }
-                for item in v2.get("attempts", [])
+                for item in solve_result.get("attempts", [])
                 if isinstance(item, dict)
             ],
         }
     )
 
-    v2_evidence = v2.get("evidence")
-    if v2_evidence == "CORROBORATED":
+    solve_evidence = solve_result.get("evidence")
+    if solve_evidence == "CORROBORATED":
         return {
             "problem": name,
             "state": "TESTS_CORROBORATED",
             "message": "Both initial providers independently matched every existing test.",
             "evidence": evidence,
         }
-    if v2_evidence == "TOOL_ERROR":
+    if solve_evidence == "TOOL_ERROR":
         return {
             "problem": name,
             "state": "TOOL_ERROR",
             "message": "The required two-provider initial evidence pair did not complete.",
             "evidence": evidence,
         }
-    if v2_evidence == "BLOCKED":
+    if solve_evidence == "BLOCKED":
         return {
             "problem": name,
             "state": "BLOCKED",
             "message": "Independent solving was blocked by missing prerequisites.",
             "evidence": evidence,
         }
-    if v2_evidence != "INCONCLUSIVE":
+    if solve_evidence != "INCONCLUSIVE":
         return {
             "problem": name,
             "state": "INCONCLUSIVE",
@@ -556,23 +556,23 @@ def verify_one(problem_root: Path, name: str, output_root: Path) -> dict[str, An
             "evidence": evidence,
         }
 
-    v3_dir = problem_output / "V3"
-    v3 = run_v3(problem_root, v2_dir, name, v3_dir)
-    suspicious = [str(case) for case in v3.get("suspicious_cases", [])]
-    mixed = [str(case) for case in v3.get("mixed_cases", [])]
+    compare_dir = problem_output / "CaseCompare"
+    compare_result = run_case_compare(problem_root, solve_dir, name, compare_dir)
+    suspicious = [str(case) for case in compare_result.get("suspicious_cases", [])]
+    mixed = [str(case) for case in compare_result.get("mixed_cases", [])]
     contested_cases = list(dict.fromkeys([*suspicious, *mixed]))
 
     evidence.append(
         {
-            "stage": "V3",
-            "result": v3.get("status"),
+            "stage": "CASE_COMPARE",
+            "result": compare_result.get("status"),
             "shared_contradiction_cases": suspicious,
             "mixed_provider_cases": mixed,
             "escalation_cases": contested_cases,
         }
     )
 
-    if v3.get("status") == "TOOL_ERROR":
+    if compare_result.get("status") == "TOOL_ERROR":
         return {
             "problem": name,
             "state": "TOOL_ERROR",
@@ -590,20 +590,20 @@ def verify_one(problem_root: Path, name: str, output_root: Path) -> dict[str, An
             "evidence": evidence,
         }
 
-    v3_report = load_v3_report(v3_dir, name)
-    if v3_report is None:
+    compare_report = load_compare_report(compare_dir, name)
+    if compare_report is None:
         return {
             "problem": name,
             "state": "TOOL_ERROR",
-            "message": "Detailed V3 report is missing.",
+            "message": "Detailed Case Compare report is missing.",
             "evidence": evidence,
         }
 
-    initial_votes = initial_case_votes(v3_report, v2, contested_cases)
+    initial_votes = initial_case_votes(compare_report, solve_result, contested_cases)
     adjudication_dir = problem_output / "Adjudication"
     adjudications = run_adjudicators(
         problem_root,
-        v3_dir,
+        compare_dir,
         name,
         adjudication_dir,
     )
@@ -635,7 +635,7 @@ def print_result(result: dict[str, Any]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Unified ACM/OI Verifier Agent. Deterministic V1 -> two-provider Flash "
+            "Unified ACM/OI Verifier Agent. Deterministic package check -> two-provider Flash "
             "whole-problem solves -> local disagreement replay -> dual strong-model "
             "case adjudication only for substantive disagreement."
         )
@@ -709,7 +709,7 @@ def main() -> int:
         return 1
     if args.attempts != 1:
         print(
-            f"NOTE: --attempts={args.attempts} is ignored by the dual-provider V1 policy; "
+            f"NOTE: --attempts={args.attempts} is ignored by the dual-provider Solve Check policy; "
             "one initial vote per provider will be used."
         )
 

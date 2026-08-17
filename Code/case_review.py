@@ -108,13 +108,13 @@ def statement_path(problem_dir: Path) -> Path:
 
 
 def load_suspicious_cases(
-    v3_problem_dir: Path,
+    compare_problem_dir: Path,
 ) -> list[str]:
-    report_file = v3_problem_dir / "report.json"
+    report_file = compare_problem_dir / "report.json"
 
     if not report_file.is_file():
         raise ValueError(
-            f"Missing V3 report: {report_file}"
+            f"Missing Case Compare report: {report_file}"
         )
 
     data = json.loads(
@@ -125,7 +125,7 @@ def load_suspicious_cases(
 
     if not isinstance(summary, dict):
         raise ValueError(
-            f"Invalid V3 report summary: {report_file}"
+            f"Invalid Case Compare report summary: {report_file}"
         )
 
     suspicious = summary.get("suspicious_cases", [])
@@ -133,7 +133,7 @@ def load_suspicious_cases(
 
     if not isinstance(suspicious, list) or not isinstance(mixed, list):
         raise ValueError(
-            f"V3 report has invalid disagreement case lists: {report_file}"
+            f"Case Compare report has invalid disagreement case lists: {report_file}"
         )
 
     result: list[str] = []
@@ -363,7 +363,7 @@ def print_case(record: dict[str, Any]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Verifier V3.1 case oracle: "
+            "Case Review: "
             "statement + one input only, "
             "then compare with hidden expected output."
         )
@@ -375,7 +375,7 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "v3_root",
+        "compare_root",
         type=Path,
     )
 
@@ -398,7 +398,7 @@ def main() -> int:
     args = parse_args()
 
     problem_root = args.problem_root.resolve()
-    v3_root = args.v3_root.resolve()
+    compare_root = args.compare_root.resolve()
     output_dir = args.output.resolve()
 
     output_dir.mkdir(
@@ -407,7 +407,7 @@ def main() -> int:
     )
 
     print()
-    print("=== VERIFIER V3.1: CASE ORACLE ===")
+    print("=== CASE REVIEW ===")
     print(f"Provider   : {ORACLE_PROVIDER}")
     print(f"Model      : {ORACLE_MODEL}")
     print(f"Reasoning  : {ORACLE_REASONING}")
@@ -426,13 +426,13 @@ def main() -> int:
         problem_dir = (
             problem_root / name
         )
-        v3_problem_dir = (
-            v3_root / name
+        compare_problem_dir = (
+            compare_root / name
         )
 
         try:
             cases = load_suspicious_cases(
-                v3_problem_dir
+                compare_problem_dir
             )
 
         except ValueError as error:
@@ -512,7 +512,7 @@ def main() -> int:
     )
 
     print()
-    print("=== V3.1 SUMMARY ===")
+    print("=== CASE REVIEW SUMMARY ===")
     print(
         "Oracle: "
         f"SUPPORTS_EXPECTED={counts['SUPPORTS_EXPECTED']} "

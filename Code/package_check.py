@@ -869,7 +869,7 @@ def print_batch_summary(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Verifier V1: deterministic mechanical "
+            "Package Check: deterministic mechanical "
             "consistency checks for ACM/OI problem packages."
         )
     )

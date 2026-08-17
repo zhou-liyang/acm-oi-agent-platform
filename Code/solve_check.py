@@ -11,10 +11,10 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from verifier_v1 import verify_problem
+    from package_check import verify_problem
     from model_router import initial_routes
 except ModuleNotFoundError:
-    from Code.verifier_v1 import verify_problem
+    from Code.package_check import verify_problem
     from Code.model_router import initial_routes
 
 
@@ -206,7 +206,7 @@ def verify_independent(
     problem_dir = problem_dir.resolve()
     output_dir = output_dir.resolve()
 
-    v1 = verify_problem(problem_dir)
+    package_report = verify_problem(problem_dir)
     meta = load_meta(problem_dir)
     routes = initial_routes()
 
@@ -214,7 +214,7 @@ def verify_independent(
         "problem": problem_dir.name,
         "problem_dir": str(problem_dir),
         "difficulty": str(meta.get("difficulty", "")),
-        "v1_overall": v1["overall"],
+        "package_check_overall": package_report["overall"],
         "evidence": "",
         "evidence_message": "",
         "attempts_planned": len(routes),
@@ -230,10 +230,10 @@ def verify_independent(
         },
     }
 
-    if v1["overall"] == "FAIL":
+    if package_report["overall"] == "FAIL":
         result["evidence"] = "BLOCKED"
         result["evidence_message"] = (
-            "Verifier V1 found a mechanical failure, so independent solving was skipped."
+            "Package Check found a mechanical failure, so independent solving was skipped."
         )
         return result
 
@@ -370,7 +370,7 @@ def run_batch(
 
     routes = initial_routes()
     print()
-    print("=== VERIFIER V2.2: TWO-PROVIDER INDEPENDENT CROSS-CHECK ===")
+    print("=== SOLVE CHECK: TWO-PROVIDER INDEPENDENT CROSS-CHECK ===")
     print(f"Root       : {root}")
     print(f"Output     : {output_dir}")
     print(f"Difficulty : {difficulty}")
@@ -384,7 +384,7 @@ def run_batch(
     if requested_attempts != 1:
         print(
             f"NOTE: --attempts={requested_attempts} is retained only for CLI "
-            "compatibility; V2.2 always uses one independent vote per provider."
+            "compatibility; Solve Check always uses one independent vote per provider."
         )
     print("Repair     : disabled")
     print("Feedback   : no expected output / no prior candidate code")
@@ -444,7 +444,7 @@ def run_batch(
     write_json(output_dir / "summary.json", summary)
 
     print()
-    print("=== V2.2 SUMMARY ===")
+    print("=== SOLVE CHECK SUMMARY ===")
     print(
         "Evidence: "
         f"CORROBORATED={counts['CORROBORATED']} "
@@ -464,7 +464,7 @@ def run_batch(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Verifier V2.2: one independent whole-problem solve from DeepSeek "
+            "Solve Check: one independent whole-problem solve from DeepSeek "
             "and one from Qwen, without repair feedback."
         )
     )
@@ -480,7 +480,7 @@ def parse_args() -> argparse.Namespace:
         "--attempts",
         type=int,
         default=1,
-        help="Deprecated compatibility option; V2.2 always uses one vote per provider.",
+        help="Deprecated compatibility option; Solve Check always uses one vote per provider.",
     )
     return parser.parse_args()
 

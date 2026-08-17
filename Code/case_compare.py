@@ -97,11 +97,11 @@ def preview(text: str, limit: int = 120) -> str:
     return value[: limit - 3] + "..."
 
 
-def discover_sources(v2_dir: Path) -> list[Path]:
+def discover_sources(solve_dir: Path) -> list[Path]:
     return sorted(
         [
             path
-            for path in v2_dir.glob("independent_*.cpp")
+            for path in solve_dir.glob("independent_*.cpp")
             if path.is_file()
         ],
         key=lambda path: path.name,
@@ -199,21 +199,21 @@ def classify_case(
 
 def analyze_problem(
     problem_dir: Path,
-    v2_problem_dir: Path,
+    solve_problem_dir: Path,
     output_dir: Path,
 ) -> dict[str, Any]:
     problem_dir = problem_dir.resolve()
-    v2_problem_dir = v2_problem_dir.resolve()
+    solve_problem_dir = solve_problem_dir.resolve()
     output_dir = output_dir.resolve()
 
-    sources = discover_sources(v2_problem_dir)
+    sources = discover_sources(solve_problem_dir)
     time_limit = load_time_limit(problem_dir)
     test_plan = load_test_plan(problem_dir)
 
     report: dict[str, Any] = {
         "problem": problem_dir.name,
         "problem_dir": str(problem_dir),
-        "v2_problem_dir": str(v2_problem_dir),
+        "solve_problem_dir": str(solve_problem_dir),
         "source_count": len(sources),
         "sources": [path.name for path in sources],
         "compile_errors": [],
@@ -337,7 +337,7 @@ def analyze_problem(
         message = (
             "At least two independent candidate programs agree "
             "with each other against the existing expected output "
-            "on one or more cases. These cases deserve V3 case-oracle "
+            "on one or more cases. These cases deserve case review "
             "investigation; this is not yet proof that .out is wrong."
         )
     elif mixed_cases:
@@ -414,7 +414,7 @@ def print_problem(report: dict[str, Any]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Verifier V3 local disagreement matrix. "
+            "Case Compare: local disagreement matrix. "
             "Reuses already generated independent candidate sources "
             "and makes no model API requests."
         )
@@ -426,7 +426,7 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "v2_root",
+        "solve_root",
         type=Path,
     )
 
@@ -452,11 +452,11 @@ def main() -> int:
 
     for name in args.names:
         problem_dir = args.problem_root / name
-        v2_problem_dir = args.v2_root / name
+        solve_problem_dir = args.solve_root / name
 
         report = analyze_problem(
             problem_dir,
-            v2_problem_dir,
+            solve_problem_dir,
             args.output,
         )
         reports.append(report)

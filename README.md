@@ -16,31 +16,31 @@ Problem setting has several failure modes that are difficult to catch with ordin
 
 The verifier therefore separates **evidence generation** from **final judgment**. Official `.out` files are not automatically trusted, and model agreement is not automatically treated as ground truth.
 
-## V1 verification pipeline
+## Verification pipeline
 
 ```text
 Problem package
     |
     v
-[V1] deterministic package checks
+[Package Check] deterministic package checks
     |
     +-- mechanical failure ----------------------> PACKAGE_FAIL
     |
     v
-[V2] two independent whole-problem solves
+[Solve Check] two independent whole-problem solves
      DeepSeek V4 Flash / non-thinking
      Qwen 3.7 Flash / non-thinking
     |
     +-- both candidates AC ----------------------> TESTS_CORROBORATED
     |
     v
-[V3] deterministic candidate replay
+[Case Compare] run both candidates case by case
      compare candidate outputs case by case
     |
     +-- no substantive case disagreement --------> INCONCLUSIVE
     |
     v
-[Adjudication] two strong independent case oracles
+[Case Review] two strong independent case reviews
      DeepSeek V4 Pro / low reasoning
      Qwen 3.7 Plus / bounded low thinking
     |
@@ -93,17 +93,17 @@ The project uses a local deterministic C++ compile / run / compare toolchain. Ge
 
 ### Verifier
 
-- `Code/verifier_v1.py`
+- `Code/package_check.py`
   - Deterministic package-level checks.
-- `Code/verifier_v2.py`
+- `Code/solve_check.py`
   - Runs exactly one independent whole-problem candidate from DeepSeek and one from Qwen.
   - No repair feedback and no access to expected outputs during generation.
-- `Code/verifier_v3.py`
+- `Code/case_compare.py`
   - Replays both candidates against every local case and builds a deterministic disagreement matrix.
-- `Code/case_oracle_v3_1.py`
-  - Strong per-case oracle used only after a substantive disagreement is found.
+- `Code/case_review.py`
+  - Strong per-case review used only after a substantive disagreement is found.
 - `Code/verifier_agent.py`
-  - Unified V1 entry point and final evidence-state aggregation.
+  - Unified verifier entry point and final evidence-state aggregation.
 
 ## Model policy
 
@@ -117,7 +117,7 @@ Escalation evidence:
 - DeepSeek: `deepseek-v4-pro`, low reasoning, `max_tokens=4096`;
 - Qwen: `qwen3.7-plus`, bounded low thinking, `max_tokens=4096`, `thinking_budget=512`.
 
-Strong case oracles return raw stdout directly rather than wrapping answers in JSON. This avoids schema drift and removes explanation-token overhead during adjudication.
+Strong review models return raw stdout directly rather than wrapping answers in JSON. This avoids schema drift and removes explanation-token overhead during adjudication.
 
 The policy is centralized in `Code/model_router.py` so model changes do not need to be duplicated across verifier stages.
 
@@ -181,7 +181,7 @@ The repository includes `Problems/sum` as a minimal public problem package for r
 .\.venv\Scripts\python.exe Code\verifier_agent.py `
     Problems `
     --names sum `
-    --output Build\VerifierV1
+    --output Build\VerifierRun
 ```
 
 This command makes live API calls to both configured providers. The output directory keeps stage reports, candidate sources, logs, usage information, disagreement evidence, and the final `summary.json`.
@@ -202,8 +202,8 @@ This command makes live API calls to both configured providers. The output direc
 - `Problems/BenchmarkV3` is the controlled regression set used for policy and code comparisons.
 - `Problems/Private` is a hidden local validation pool and is not intended to be published as part of the repository.
 
-The automated V1 workflow currently assumes the selected input set is suitable for ordinary text-based judging. The workflow deliberately does not try to guess and silently exclude image-dependent, special-judge, or interactive problems from names or package heuristics.
+The automated workflow currently assumes the selected input set is suitable for ordinary text-based judging. The workflow deliberately does not try to guess and silently exclude image-dependent, special-judge, or interactive problems from names or package heuristics.
 
 ## Current scope
 
-V1 focuses on making the complete verifier pipeline small, reproducible, cost-bounded, and explainable. Expanding to harder problem classes, richer special-judge support, or more providers is deliberately deferred until this baseline is stable.
+The current release focuses on making the complete verifier pipeline small, reproducible, cost-bounded, and explainable. Expanding to harder problem classes, richer special-judge support, or more providers is deliberately deferred until this baseline is stable.
