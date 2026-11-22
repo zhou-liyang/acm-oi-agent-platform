@@ -93,6 +93,9 @@ The project uses a local deterministic C++ compile / run / compare toolchain. Ge
 
 ### Verifier
 
+- `Code/problem_package.py`
+  - Shared problem-package access layer.
+  - Resolves `problem.md`, `data/`, flexible `.in` + (`.out` or `.ans`) pairs, and private reference assets.
 - `Code/package_check.py`
   - Deterministic package-level checks.
 - `Code/solve_check.py`
@@ -104,6 +107,34 @@ The project uses a local deterministic C++ compile / run / compare toolchain. Ge
   - Strong per-case review used only after a substantive disagreement is found.
 - `Code/verifier_agent.py`
   - Unified verifier entry point and final evidence-state aggregation.
+
+## Problem package contract
+
+The preferred external problem package no longer requires `problem.json`.
+
+```text
+problem_name/
+├─ problem.md
+├─ data/
+│  ├─ A00.in
+│  ├─ A00.out
+│  ├─ 001.in
+│  └─ 001.ans
+├─ solution.md        # optional private reference
+└─ source/            # optional private authoring sources
+   ├─ std.cpp
+   ├─ maker.py
+   ├─ spj.cpp
+   └─ interactor.cpp
+```
+
+`problem.md` and `data/` are the public verification inputs. `solution.md` and `source/` are private references and are not exposed to the independent solver generation stage.
+
+Test discovery pairs files by their shared filename stem. Expected outputs may use either `.out` or `.ans`. If both exist for one stem, or if an input/output is orphaned, Package Check fails instead of guessing.
+
+For transition only, legacy `statement.md` and `Tests/` packages remain readable with warnings. They are not the preferred contract.
+
+Runtime metadata such as time and memory limits will be extracted from `problem.md` by a dedicated profiling stage. Until that stage is connected, the local judge uses an explicit temporary 2-second fallback rather than reading `problem.json`.
 
 ## Model policy
 

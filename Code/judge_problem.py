@@ -1,8 +1,15 @@
-import json
 from pathlib import Path
 import sys
 
+try:
+    from problem_package import data_directory, statement_path
+except ModuleNotFoundError:
+    from Code.problem_package import data_directory, statement_path
+
 from judge_tests import judge_tests
+
+
+DEFAULT_TIME_LIMIT_SECONDS = 2.0
 
 
 def load_problem(
@@ -15,49 +22,29 @@ def load_problem(
             f"Problem directory does not exist: {problem_dir}"
         )
 
-    config_file = problem_dir / "problem.json"
-
-    if not config_file.is_file():
+    statement = statement_path(
+        problem_dir,
+        allow_legacy=True,
+    )
+    if statement is None:
         raise ValueError(
-            f"Problem config does not exist: {config_file}"
+            f"Problem statement does not exist: {problem_dir / 'problem.md'}"
         )
 
-    try:
-        config = json.loads(
-            config_file.read_text(
-                encoding="utf-8-sig",
-            )
-        )
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    tests_dir = data_directory(
+        problem_dir,
+        allow_legacy=True,
+    )
+    if tests_dir is None:
         raise ValueError(
-            f"Invalid problem config: {error}"
-        ) from error
-
-    name = config.get("name")
-    time_limit = config.get("time_limit")
-
-    if not isinstance(name, str) or not name.strip():
-        raise ValueError(
-            "Problem config requires a non-empty 'name'."
+            f"Data directory does not exist: {problem_dir / 'data'}"
         )
 
-    if (
-        not isinstance(time_limit, (int, float))
-        or isinstance(time_limit, bool)
-        or time_limit <= 0
-    ):
-        raise ValueError(
-            "Problem config requires a positive 'time_limit'."
-        )
+    # Temporary deterministic fallback.
+    # problem_profile.py will replace this in the next input-contract phase.
+    time_limit = DEFAULT_TIME_LIMIT_SECONDS
 
-    tests_dir = problem_dir / "Tests"
-
-    if not tests_dir.is_dir():
-        raise ValueError(
-            f"Tests directory does not exist: {tests_dir}"
-        )
-
-    return name.strip(), float(time_limit), tests_dir
+    return problem_dir.name, time_limit, tests_dir
 
 
 def judge_problem(

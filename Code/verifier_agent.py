@@ -54,6 +54,7 @@ def required_tools() -> list[Path]:
         root / "model_client.py",
         root / "model_providers.py",
         root / "model_router.py",
+        root / "problem_package.py",
         root / "package_check.py",
         root / "solve_check.py",
         root / "case_compare.py",

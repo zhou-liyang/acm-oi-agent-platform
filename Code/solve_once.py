@@ -166,7 +166,7 @@ def main() -> int:
         print(
             "Usage: py Code\\solve_once.py "
             "<problem_dir> "
-            "<statement.md> "
+            "<problem.md> "
             "<output.cpp>"
         )
         return 1

@@ -75,7 +75,7 @@ def main() -> int:
     if len(sys.argv) != 4:
         print(
             "Usage: py Code\\solve_agent.py "
-            "<problem_dir> <statement.md> <output.cpp>"
+            "<problem_dir> <problem.md> <output.cpp>"
         )
         return 1
 

@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from problem_package import discover_test_cases
     from Tools.compile_cpp import compile_cpp
     from Tools.run_program import run_program
     from Tools.compare_output import compare_output
 except ModuleNotFoundError:
+    from Code.problem_package import discover_test_cases
     from Code.Tools.compile_cpp import compile_cpp
     from Code.Tools.run_program import run_program
     from Code.Tools.compare_output import compare_output
@@ -32,50 +34,9 @@ def load_json(path: Path) -> Any:
 
 
 def load_time_limit(problem_dir: Path) -> float:
-    try:
-        data = load_json(problem_dir / "problem.json")
-    except Exception:
-        return 2.0
-
-    value = data.get("time_limit", 2.0)
-
-    if (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and value > 0
-    ):
-        return float(value)
-
+    # Temporary deterministic fallback.
+    # problem_profile.py will replace this in the next input-contract phase.
     return 2.0
-
-
-def load_test_plan(problem_dir: Path) -> dict[str, str]:
-    path = problem_dir / "test_plan.json"
-
-    if not path.is_file():
-        return {}
-
-    try:
-        data = load_json(path)
-    except Exception:
-        return {}
-
-    result: dict[str, str] = {}
-
-    if not isinstance(data, list):
-        return result
-
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-
-        case = item.get("case")
-        purpose = item.get("purpose")
-
-        if isinstance(case, (str, int)) and isinstance(purpose, str):
-            result[str(case)] = purpose
-
-    return result
 
 
 def normalized(text: str) -> str:
@@ -208,7 +169,10 @@ def analyze_problem(
 
     sources = discover_sources(solve_problem_dir)
     time_limit = load_time_limit(problem_dir)
-    test_plan = load_test_plan(problem_dir)
+    inventory = discover_test_cases(
+        problem_dir,
+        allow_legacy=True,
+    )
 
     report: dict[str, Any] = {
         "problem": problem_dir.name,
@@ -237,28 +201,32 @@ def analyze_problem(
 
     report["compile_errors"] = compile_errors
 
-    tests_dir = problem_dir / "Tests"
-    input_files = sorted(
-        tests_dir.glob("*.in"),
-        key=lambda path: path.stem,
-    )
+    if not inventory.ok:
+        report["summary"] = {
+            "status": "BLOCKED",
+            "message": (
+                "Test data are incomplete or ambiguous; "
+                "Package Check should resolve them before case comparison."
+            ),
+            "suspicious_cases": [],
+            "mixed_cases": [],
+            "supported_cases": [],
+            "case_count": 0,
+        }
+        return report
 
     suspicious_cases: list[str] = []
     mixed_cases: list[str] = []
     supported_cases: list[str] = []
 
-    for input_file in input_files:
-        case = input_file.stem
-        expected_file = input_file.with_suffix(".out")
+    for test_case in inventory.cases:
+        case = test_case.name
 
-        if not expected_file.is_file():
-            continue
-
-        input_text = input_file.read_text(
+        input_text = test_case.input_path.read_text(
             encoding="utf-8",
             errors="replace",
         )
-        expected = expected_file.read_text(
+        expected = test_case.expected_path.read_text(
             encoding="utf-8",
             errors="replace",
         )
@@ -315,7 +283,7 @@ def analyze_problem(
 
         case_report = {
             "case": case,
-            "purpose": test_plan.get(case),
+            "purpose": None,
             "classification": label,
             "expected_digest": digest(expected),
             "expected_preview": preview(expected),

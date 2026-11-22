@@ -10,8 +10,10 @@ from typing import Any
 
 try:
     from model_client import ModelClient
+    from problem_package import find_test_case, statement_path
 except ModuleNotFoundError:
     from Code.model_client import ModelClient
+    from Code.problem_package import find_test_case, statement_path
 
 try:
     from Tools.compare_output import compare_output
@@ -89,21 +91,6 @@ def read_text(path: Path) -> str:
     return path.read_text(
         encoding="utf-8-sig",
         errors="strict",
-    )
-
-
-def statement_path(problem_dir: Path) -> Path:
-    for name in (
-        "statement.md",
-        "problem.md",
-    ):
-        path = problem_dir / name
-
-        if path.is_file():
-            return path
-
-    raise ValueError(
-        f"No statement.md/problem.md in {problem_dir}"
     )
 
 
@@ -196,30 +183,21 @@ def run_case(
     output_dir: Path,
 ) -> dict[str, Any]:
     statement_file = statement_path(
-        problem_dir
+        problem_dir,
+        allow_legacy=True,
     )
-
-    input_file = (
-        problem_dir
-        / "Tests"
-        / f"{case}.in"
-    )
-
-    expected_file = (
-        problem_dir
-        / "Tests"
-        / f"{case}.out"
-    )
-
-    if not input_file.is_file():
+    if statement_file is None:
         raise ValueError(
-            f"Missing input file: {input_file}"
+            f"Missing problem.md in {problem_dir}"
         )
 
-    if not expected_file.is_file():
-        raise ValueError(
-            f"Missing expected output file: {expected_file}"
-        )
+    test_case = find_test_case(
+        problem_dir,
+        case,
+        allow_legacy=True,
+    )
+    input_file = test_case.input_path
+    expected_file = test_case.expected_path
 
     statement = read_text(
         statement_file
@@ -416,7 +394,7 @@ def main() -> int:
         "Model sees : statement + single input only"
     )
     print(
-        "Hidden     : .out, test purpose, candidate code, votes"
+        "Hidden     : expected outputs, private references, candidate code, votes"
     )
     print()
 

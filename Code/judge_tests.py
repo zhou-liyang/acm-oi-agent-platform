@@ -1,6 +1,11 @@
 from pathlib import Path
 import sys
 
+try:
+    from problem_package import discover_test_cases_in_directory
+except ModuleNotFoundError:
+    from Code.problem_package import discover_test_cases_in_directory
+
 from Tools.compile_cpp import compile_cpp
 from Tools.run_program import run_program
 from Tools.compare_output import compare_output
@@ -21,27 +26,35 @@ def judge_tests(
 
     if not tests_dir.is_dir():
         return "ERROR", [
-            ("-", "ERROR", f"Tests directory does not exist: {tests_dir}")
+            ("-", "ERROR", f"Data directory does not exist: {tests_dir}")
         ]
 
-    input_files = sorted(tests_dir.glob("*.in"))
+    inventory = discover_test_cases_in_directory(tests_dir)
 
-    if not input_files:
+    if not inventory.ok:
+        details = {
+            "input_without_output": inventory.input_without_output,
+            "output_without_input": inventory.output_without_input,
+            "ambiguous_inputs": inventory.ambiguous_inputs,
+            "ambiguous_outputs": inventory.ambiguous_outputs,
+        }
         return "ERROR", [
-            ("-", "ERROR", f"No .in files found in: {tests_dir}")
+            (
+                "-",
+                "ERROR",
+                "Test data are incomplete or ambiguous: "
+                f"{details}",
+            )
         ]
 
-    for input_file in input_files:
-        expected_file = input_file.with_suffix(".out")
-
-        if not expected_file.is_file():
-            return "ERROR", [
-                (
-                    input_file.stem,
-                    "ERROR",
-                    f"Missing output file: {expected_file}",
-                )
-            ]
+    if not inventory.cases:
+        return "ERROR", [
+            (
+                "-",
+                "ERROR",
+                f"No complete .in + (.out|.ans) test pairs found in: {tests_dir}",
+            )
+        ]
 
     build_dir = Path("Build").resolve()
     program = build_dir / f"{source.stem}.exe"
@@ -53,17 +66,15 @@ def judge_tests(
             ("-", "CE", compile_message)
         ]
 
-    results = []
+    results: list[tuple[str, str, str]] = []
 
-    for input_file in input_files:
-        expected_file = input_file.with_suffix(".out")
-
-        input_text = input_file.read_text(
+    for case in inventory.cases:
+        input_text = case.input_path.read_text(
             encoding="utf-8",
             errors="replace",
         )
 
-        expected = expected_file.read_text(
+        expected = case.expected_path.read_text(
             encoding="utf-8",
             errors="replace",
         )
@@ -77,7 +88,7 @@ def judge_tests(
         if run_status == "TLE":
             results.append(
                 (
-                    input_file.stem,
+                    case.name,
                     "TLE",
                     "Time limit exceeded.",
                 )
@@ -92,7 +103,7 @@ def judge_tests(
 
             results.append(
                 (
-                    input_file.stem,
+                    case.name,
                     "RE",
                     message,
                 )
@@ -102,7 +113,7 @@ def judge_tests(
         if run_status != "OK":
             results.append(
                 (
-                    input_file.stem,
+                    case.name,
                     "ERROR",
                     stderr or "Unknown execution error.",
                 )
@@ -113,7 +124,7 @@ def judge_tests(
 
         results.append(
             (
-                input_file.stem,
+                case.name,
                 status,
                 message,
             )
@@ -133,7 +144,7 @@ if __name__ == "__main__":
     if len(sys.argv) not in (3, 4):
         print(
             "Usage: py Code\\judge_tests.py "
-            "<source.cpp> <tests_dir> [timeout]"
+            "<source.cpp> <data_dir> [timeout]"
         )
         raise SystemExit(1)
 

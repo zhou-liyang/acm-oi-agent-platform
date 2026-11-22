@@ -12,9 +12,11 @@ from typing import Any
 
 try:
     from package_check import verify_problem
+    from problem_package import statement_path
     from model_router import initial_routes
 except ModuleNotFoundError:
     from Code.package_check import verify_problem
+    from Code.problem_package import statement_path
     from Code.model_router import initial_routes
 
 
@@ -38,23 +40,6 @@ def write_json(path: Path, data: Any) -> None:
         json.dumps(data, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-
-
-def load_meta(problem_dir: Path) -> dict[str, Any]:
-    path = problem_dir / "problem.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
-    except Exception:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def statement_path(problem_dir: Path) -> Path | None:
-    for name in ("statement.md", "problem.md"):
-        path = problem_dir / name
-        if path.is_file():
-            return path
-    return None
 
 
 def parse_usage(text: str) -> dict[str, int]:
@@ -207,13 +192,12 @@ def verify_independent(
     output_dir = output_dir.resolve()
 
     package_report = verify_problem(problem_dir)
-    meta = load_meta(problem_dir)
     routes = initial_routes()
 
     result: dict[str, Any] = {
         "problem": problem_dir.name,
         "problem_dir": str(problem_dir),
-        "difficulty": str(meta.get("difficulty", "")),
+        "difficulty": "",
         "package_check_overall": package_report["overall"],
         "evidence": "",
         "evidence_message": "",
@@ -237,10 +221,10 @@ def verify_independent(
         )
         return result
 
-    statement = statement_path(problem_dir)
+    statement = statement_path(problem_dir, allow_legacy=True)
     if statement is None:
         result["evidence"] = "BLOCKED"
-        result["evidence_message"] = "No statement.md/problem.md is available."
+        result["evidence_message"] = "No problem.md is available."
         return result
 
     solve_once = Path(__file__).resolve().parent / "solve_once.py"
@@ -322,8 +306,7 @@ def discover(root: Path, difficulty: str, names: set[str] | None) -> list[Path]:
             continue
         if names is not None and problem_dir.name not in names:
             continue
-        meta = load_meta(problem_dir)
-        current = str(meta.get("difficulty", ""))
+            current = str(meta.get("difficulty", ""))
         if difficulty != "all" and current != difficulty:
             continue
         items.append(problem_dir)
